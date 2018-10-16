@@ -193,7 +193,7 @@ my $patron_object = Koha::Patrons->find( $patron_hr->{borrowernumber} );
 my ( undef, $needsconfirmation ) = CanBookBeIssued( $patron_object, $item->barcode );
 ok( $needsconfirmation->{HIGHHOLDS}, "High holds checkout needs confirmation" );
 
-( undef, $needsconfirmation ) = CanBookBeIssued( $patron_object, $item->barcode, undef, undef, undef, { override_high_holds => 1 } );
+( undef, $needsconfirmation ) = CanBookBeIssued( $patron_object, $item->barcode, undef, undef, { override_high_holds => 1 } );
 ok( !$needsconfirmation->{HIGHHOLDS}, "High holds checkout does not need confirmation" );
 
 $schema->storage->txn_rollback();

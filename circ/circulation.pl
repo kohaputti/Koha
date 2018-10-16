@@ -335,7 +335,6 @@ if (@$barcodes) {
         $patron,
         $barcode, $datedue,
         $inprocess,
-        undef,
         {
             onsite_checkout     => $onsite_checkout,
             override_high_holds => $override_high_holds || $override_high_holds_tmp || 0,

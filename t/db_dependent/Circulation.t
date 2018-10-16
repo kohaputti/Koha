@@ -2206,7 +2206,7 @@ subtest 'CanBookBeIssued | is_overdue' => sub {
     my $issue = AddIssue( $patron->unblessed, $item->{barcode}, $five_days_go ); # date due was 10d ago
     my $actualissue = Koha::Checkouts->find( { itemnumber => $item->{itemnumber} } );
     is( output_pref({ str => $actualissue->date_due, dateonly => 1}), $five_days_go, "First issue works");
-    my ($issuingimpossible, $needsconfirmation) = CanBookBeIssued($patron,$item->{barcode},$ten_days_go, undef, undef, undef);
+    my ($issuingimpossible, $needsconfirmation) = CanBookBeIssued($patron,$item->{barcode},$ten_days_go, undef, undef);
     is( $needsconfirmation->{RENEW_ISSUE}, 1, "This is a renewal");
     is( $needsconfirmation->{TOO_MANY}, undef, "Not too many, is a renewal");
 
@@ -2242,7 +2242,7 @@ subtest 'CanBookBeIssued | item-level_itypes=biblio' => sub {
         }
     )->store;
 
-    my ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef, undef );
+    my ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef );
     is_deeply( $needsconfirmation, {}, 'Item can be issued to this patron' );
     is_deeply( $issuingimpossible, {}, 'Item can be issued to this patron' );
 };
@@ -2287,13 +2287,13 @@ subtest 'CanBookBeIssued | notforloan' => sub {
 
         t::lib::Mocks::mock_preference('item-level_itypes', 1); # item
         # Is for loan at item type and item level
-        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef, undef );
+        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef );
         is_deeply( $needsconfirmation, {}, 'Item can be issued to this patron' );
         is_deeply( $issuingimpossible, {}, 'Item can be issued to this patron' );
 
         # not for loan at item type level
         Koha::ItemTypes->find( $itemtype->{itemtype} )->notforloan(1)->store;
-        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef, undef );
+        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef );
         is_deeply( $needsconfirmation, {}, 'No confirmation needed, AllowNotForLoanOverride=0' );
         is_deeply(
             $issuingimpossible,
@@ -2304,7 +2304,7 @@ subtest 'CanBookBeIssued | notforloan' => sub {
         # not for loan at item level
         Koha::ItemTypes->find( $itemtype->{itemtype} )->notforloan(undef)->store;
         $item->notforloan( 1 )->store;
-        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef, undef );
+        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef );
         is_deeply( $needsconfirmation, {}, 'No confirmation needed, AllowNotForLoanOverride=0' );
         is_deeply(
             $issuingimpossible,
@@ -2329,13 +2329,13 @@ subtest 'CanBookBeIssued | notforloan' => sub {
         # for loan at item type and item level
         $item->notforloan(undef)->store;
         $item->biblioitem->itemtype($itemtype->{itemtype})->store;
-        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef, undef );
+        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef );
         is_deeply( $needsconfirmation, {}, 'Item can be issued to this patron' );
         is_deeply( $issuingimpossible, {}, 'Item can be issued to this patron' );
 
         # not for loan at item type level
         Koha::ItemTypes->find( $itemtype->{itemtype} )->notforloan(1)->store;
-        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef, undef );
+        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef );
         is_deeply( $needsconfirmation, {}, 'No confirmation needed, AllowNotForLoanOverride=0' );
         is_deeply(
             $issuingimpossible,
@@ -2346,7 +2346,7 @@ subtest 'CanBookBeIssued | notforloan' => sub {
         # not for loan at item level
         Koha::ItemTypes->find( $itemtype->{itemtype} )->notforloan(undef)->store;
         $item->notforloan( 1 )->store;
-        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef, undef );
+        ( $issuingimpossible, $needsconfirmation ) = CanBookBeIssued( $patron, $item->barcode, undef, undef, undef );
         is_deeply( $needsconfirmation, {}, 'No confirmation needed, AllowNotForLoanOverride=0' );
         is_deeply(
             $issuingimpossible,

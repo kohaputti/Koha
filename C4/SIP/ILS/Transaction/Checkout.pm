@@ -57,9 +57,7 @@ sub do_checkout {
     my $patron = Koha::Patrons->find( { cardnumber => $patron_barcode } );
     my $borrower = $patron->unblessed;
 	$debug and warn "do_checkout borrower: . " . Dumper $borrower;
-    my ($issuingimpossible, $needsconfirmation) = _can_we_issue($patron, $barcode,
-        C4::Context->preference("AllowItemsOnHoldCheckout")
-    );
+    my ($issuingimpossible, $needsconfirmation) = _can_we_issue($patron, $barcode );
 
     my $noerror=1;  # If set to zero we block the issue
     if (keys %{$issuingimpossible}) {
@@ -150,10 +148,10 @@ sub do_checkout {
 }
 
 sub _can_we_issue {
-    my ( $patron, $barcode, $pref ) = @_;
+    my ( $patron, $barcode ) = @_;
 
     my ( $issuingimpossible, $needsconfirmation, $alerts ) =
-      CanBookBeIssued( $patron, $barcode, undef, 0, $pref );
+      CanBookBeIssued( $patron, $barcode, undef, 0 );
     for my $href ( $issuingimpossible, $needsconfirmation ) {
 
         # some data is returned using lc keys we only

@@ -135,7 +135,6 @@ sub BuildReport {
         AllFinesNeedOverride
         AllowFineOverride
         AllowItemsOnHoldCheckout
-        AllowItemsOnHoldCheckoutSCO
         AllowNotForLoanOverride
         AllowRenewalLimitOverride
         AllowReturnToBranch

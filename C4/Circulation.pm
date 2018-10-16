@@ -556,7 +556,7 @@ sub TooMany {
 =head2 CanBookBeIssued
 
   ( $issuingimpossible, $needsconfirmation, [ $alerts ] ) =  CanBookBeIssued( $patron,
-                      $barcode, $duedate, $inprocess, $ignore_reserves, $params );
+                      $barcode, $duedate, $inprocess, $params );
 
 Check if a book can be issued.
 
@@ -575,8 +575,6 @@ data is keyed in lower case!
 =item C<$duedates> is a DateTime object.
 
 =item C<$inprocess> boolean switch
-
-=item C<$ignore_reserves> boolean switch
 
 =item C<$params> Hashref of additional parameters
 
@@ -659,7 +657,7 @@ if the borrower borrows to much things
 =cut
 
 sub CanBookBeIssued {
-    my ( $patron, $barcode, $duedate, $inprocess, $ignore_reserves, $params ) = @_;
+    my ( $patron, $barcode, $duedate, $inprocess, $params ) = @_;
     my %needsconfirmation;    # filled with problems that needs confirmations
     my %issuingimpossible;    # filled with problems that causes the issue to be IMPOSSIBLE
     my %alerts;               # filled with messages that shouldn't stop issuing, but the librarian should be aware of.
@@ -980,35 +978,33 @@ sub CanBookBeIssued {
         }
     }
 
-    unless ( $ignore_reserves ) {
-        # See if the item is on reserve.
-        my ( $restype, $res ) = C4::Reserves::CheckReserves( $item->{'itemnumber'} );
-        if ($restype) {
-            my $resbor = $res->{'borrowernumber'};
-            if ( $resbor ne $patron->borrowernumber ) {
-                my $patron = Koha::Patrons->find( $resbor );
-                if ( $restype eq "Waiting" )
-                {
-                    # The item is on reserve and waiting, but has been
-                    # reserved by some other patron.
-                    $needsconfirmation{RESERVE_WAITING} = 1;
-                    $needsconfirmation{'resfirstname'} = $patron->firstname;
-                    $needsconfirmation{'ressurname'} = $patron->surname;
-                    $needsconfirmation{'rescardnumber'} = $patron->cardnumber;
-                    $needsconfirmation{'resborrowernumber'} = $patron->borrowernumber;
-                    $needsconfirmation{'resbranchcode'} = $res->{branchcode};
-                    $needsconfirmation{'reswaitingdate'} = $res->{'waitingdate'};
-                }
-                elsif ( $restype eq "Reserved" ) {
-                    # The item is on reserve for someone else.
-                    $needsconfirmation{RESERVED} = 1;
-                    $needsconfirmation{'resfirstname'} = $patron->firstname;
-                    $needsconfirmation{'ressurname'} = $patron->surname;
-                    $needsconfirmation{'rescardnumber'} = $patron->cardnumber;
-                    $needsconfirmation{'resborrowernumber'} = $patron->borrowernumber;
-                    $needsconfirmation{'resbranchcode'} = $patron->branchcode;
-                    $needsconfirmation{'resreservedate'} = $res->{reservedate};
-                }
+    # See if the item is on reserve.
+    my ( $restype, $res ) = C4::Reserves::CheckReserves( $item->{'itemnumber'} );
+    if ($restype) {
+        my $resbor = $res->{'borrowernumber'};
+        if ( $resbor ne $patron->borrowernumber ) {
+            my $patron = Koha::Patrons->find( $resbor );
+            if ( $restype eq "Waiting" )
+            {
+                # The item is on reserve and waiting, but has been
+                # reserved by some other patron.
+                $needsconfirmation{RESERVE_WAITING} = 1;
+                $needsconfirmation{'resfirstname'} = $patron->firstname;
+                $needsconfirmation{'ressurname'} = $patron->surname;
+                $needsconfirmation{'rescardnumber'} = $patron->cardnumber;
+                $needsconfirmation{'resborrowernumber'} = $patron->borrowernumber;
+                $needsconfirmation{'resbranchcode'} = $res->{branchcode};
+                $needsconfirmation{'reswaitingdate'} = $res->{'waitingdate'};
+            }
+            elsif ( $restype eq "Reserved" && !C4::Context->preference("AllowItemsOnHoldCheckout") ) {
+                # The item is on reserve for someone else.
+                $needsconfirmation{RESERVED} = 1;
+                $needsconfirmation{'resfirstname'} = $patron->firstname;
+                $needsconfirmation{'ressurname'} = $patron->surname;
+                $needsconfirmation{'rescardnumber'} = $patron->cardnumber;
+                $needsconfirmation{'resborrowernumber'} = $patron->borrowernumber;
+                $needsconfirmation{'resbranchcode'} = $patron->branchcode;
+                $needsconfirmation{'resreservedate'} = $res->{reservedate};
             }
         }
     }
