@@ -71,14 +71,14 @@ sub do_checkout {
         foreach my $confirmation (keys %{$needsconfirmation}) {
             if ($confirmation eq 'RENEW_ISSUE'){
                 $self->screen_msg("Item already checked out to you: renewing item.");
-            } elsif ($confirmation eq 'RESERVED' or $confirmation eq 'RESERVE_WAITING') {
-                my $x = $self->{item}->available($patron_barcode);
-                if ($x) {
-                    $self->screen_msg("Item was reserved for you.");
-                } else {
-                    $self->screen_msg("Item is reserved for another patron upon return.");
-                    $noerror = 0;
-                }
+            } elsif ($confirmation eq 'RESERVED') {
+                $self->screen_msg("Item is reserved for another patron upon return.");
+                $noerror = 0;
+                last;
+            } elsif ($confirmation eq 'RESERVE_WAITING') {
+                $self->screen_msg("Item is on hold shelf for another patron.");
+                $noerror = 0;
+                last;
             } elsif ($confirmation eq 'ISSUED_TO_ANOTHER') {
                 $self->screen_msg("Item already checked out to another patron.  Please return item for check-in.");
                 $noerror = 0;
@@ -105,15 +105,6 @@ sub do_checkout {
         }
     }
     my $itemnumber = $self->{item}->{itemnumber};
-    foreach (@$shelf) {
-        $debug and warn "shelf has ($_->{itemnumber} for $_->{borrowernumber}). this is ($itemnumber, $self->{patron}->{borrowernumber})";
-        ($_->{itemnumber} eq $itemnumber) or next;    # skip it if not this item
-        ($_->{borrowernumber} == $self->{patron}->{borrowernumber}) and last;
-            # if item was waiting for this patron, we're done.  AddIssue takes care of the "W" hold.
-        $debug and warn "Item is on hold shelf for another patron.";
-        $self->screen_msg("Item is on hold shelf for another patron.");
-        $noerror = 0;
-    }
     my ($fee, undef) = GetIssuingCharges($itemnumber, $self->{patron}->{borrowernumber});
     if ( $fee > 0 ) {
         $self->{sip_fee_type} = '06';
