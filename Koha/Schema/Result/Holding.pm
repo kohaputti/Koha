@@ -120,6 +120,8 @@ __PACKAGE__->add_columns(
   { data_type => "varchar", is_nullable => 1, size => 80 },
   "callnumber",
   { data_type => "varchar", is_nullable => 1, size => 255 },
+  "ccode",
+  { data_type => "varchar", is_nullable => 1, size => 80 },
   "suppress",
   { data_type => "tinyint", is_nullable => 1 },
   "timestamp",
