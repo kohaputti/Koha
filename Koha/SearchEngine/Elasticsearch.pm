@@ -73,6 +73,15 @@ sub new {
     return $self;
 }
 
+=head2 get_elasticsearch
+
+    my $elasticsearch_client = $self->get_elasticsearch();
+
+Returns a C<Search::Elasticsearch> client. The client is cached on a C<Koha::SearchEngine::ElasticSearch>
+instance level and will be reused if method is called multiple times.
+
+=cut
+
 sub get_elasticsearch {
     my $self = shift @_;
     unless (defined $self->{elasticsearch}) {
@@ -145,8 +154,8 @@ sub get_elasticsearch_params {
 
     my $settings = $self->get_elasticsearch_settings();
 
-This provides the settings provided to elasticsearch when an index is created.
-These can do things like define tokenisation methods.
+This provides the settings provided to Elasticsearch when an index is created.
+These can do things like define tokenization methods.
 
 A hashref containing the settings is returned.
 
@@ -170,7 +179,7 @@ sub get_elasticsearch_settings {
 
     my $mappings = $self->get_elasticsearch_mappings();
 
-This provides the mappings that get passed to elasticsearch when an index is
+This provides the mappings that get passed to Elasticsearch when an index is
 created.
 
 =cut
@@ -232,7 +241,7 @@ sub get_elasticsearch_mappings {
 
 =head2 _get_elasticsearch_mapping
 
-Get the ES mappings for the given purpose and data type
+Get the Elasticsearch mappings for the given purpose and data type.
 
 $mapping = _get_elasticsearch_mapping('search', 'text');
 
@@ -304,13 +313,31 @@ sub sort_fields {
     return $self->_sort_fields_accessor();
 }
 
+=head2 marc_records_to_documents($marc_records)
+
+    my @record_documents = $self->marc_records_to_documents($marc_records);
+
+Using mappings stored in database convert C<$marc_records> to ElasticSearch documents.
+
+Returns array of hash references, representing ElasticSearch documents,
+acceptable as body payload in C<Search::Elasticsearch> requests.
+
+=over 4
+
+=item C<$marc_documents>
+
+Reference to array of C<MARC::Record> objects to be converted to ElasticSearch documents.
+
+=back
+
+=cut
+
 sub marc_records_to_documents {
     my ($self, $records) = @_;
-    my $rules = $self->get_marc_mapping_rules();
+    my $rules = $self->_get_marc_mapping_rules();
     my $control_fields_rules = $rules->{control_fields};
     my $data_fields_rules = $rules->{data_fields};
     my $marcflavour = lc C4::Context->preference('marcflavour');
-    my $serialization_format = C4::Context->preference('ElasticsearchMARCSerializationFormat');
 
     my @record_documents;
 
@@ -429,8 +456,28 @@ sub marc_records_to_documents {
     return \@record_documents;
 }
 
-# Provides the rules for marc to Elasticsearch JSON document conversion.
-sub get_marc_mapping_rules {
+=head2 _get_marc_mapping_rules
+
+    my $mapping_rules = $self->_get_marc_mapping_rules()
+
+Generates rules from mappings stored in database for MARC records to Elasticsearch JSON document conversion.
+
+Since field retrieval is slow in C<MARC::Records> (all fields are itereted through for
+each call to C<MARC::Record>->field) we create an optimized structure of mapping
+rules keyed by MARC field tags holding all the mapping rules for that particular tag.
+
+We can then iterate through all MARC fields for each record and apply all relevant
+rules once per fields instead of retreiving fields multiple times for each mapping rule
+wich is terribly slow.
+
+=cut
+
+# TODO: This structure can be used for processing multiple MARC::Records so is currently
+# rebuilt for each batch. Since it is cacheable it could also be stored in an in
+# memory cache which it is currently not. The performance gain of caching
+# would probably be marginal, but to do this could be a further improvement.
+
+sub _get_marc_mapping_rules {
     my ($self) = @_;
 
     my $marcflavour = lc C4::Context->preference('marcflavour');
