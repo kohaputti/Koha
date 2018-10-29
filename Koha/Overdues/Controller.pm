@@ -18,6 +18,8 @@ package Koha::Overdues::Controller;
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 use Modern::Perl;
+use Carp::Always;
+use Data::Printer;
 
 use Koha::Database;
 use Koha::MessageQueues;
@@ -28,12 +30,17 @@ use Koha::MessageQueue::PrintProviderInterface;
 use Koha::Overdues::Calendar;
 use Koha::MessageQueue::Notification::Overdues;
 
+use Koha::Logger;
+my $logger = bless({lazyLoad => {category => __PACKAGE__}}, 'Koha::Logger');
 
 sub new {
     my ($class, $self) = @_;
 
     $self = {} unless ref $self eq 'HASH';
     bless $self, $class;
+    $self->{letterNumbers} = split(',', $self->{letterNumbers}) if (ref($self->{letterNumbers}) eq 'ARRAY');
+
+    $logger->debug("Instantiated with parameters ".Data::Printer::np($self)) if $logger->is_debug();
     return $self;
 }
 
@@ -63,15 +70,14 @@ sub gatherOverdueNotifications {
                                 verbose => $self->{verbose},
                                 lookback => $self->{lookback},
                                 notNotForLoan => $self->{notNotForLoan},
-                                letterNumbers => $letterNumbers,
-                                borrowerCategories => $borrowerCategories,
+                                letterNumbers => $letterNumbers || $self->{letterNumbers},
+                                borrowerCategories => $borrowerCategories || $self->{borrowerCategories},
                                 sortBy => $self->{sortBy},
                                 sortByAlt => $self->{sortByAlt},
     });
     my $overdues = $odueFinder->findAllNewOverdues();
     my $builder = Koha::Overdues::Builder->new({
                                 _repeatPageChange => $self->{_repeatPageChange},
-                                verbose => $self->{verbose},
                                 mergeBranches => $self->{mergeBranches},
     });
     my ($message_queue_rows, $errors) = $builder->buildAllOverdueNotifications($overdues);
@@ -91,11 +97,12 @@ Adds a fine for each sent letter if configured to do so.
 
 sub sendOverdueNotifications {
     my ($self, $letterNumbers) = @_;
+    $logger->info("Sending overdue notification letters '@$letterNumbers'");
     my $schema = Koha::Database->new()->schema();
 
     my $messageQueues = Koha::MessageQueue::Notification::Overdues->getPendingAndFailedOverdueLetters($letterNumbers);
     unless ($messageQueues && @$messageQueues) {
-        print "No messageQueues to send this time.\n";
+        $logger->debug("No messageQueues to send this time");
         return;
     }
 
@@ -103,7 +110,7 @@ sub sendOverdueNotifications {
     my $printProvider = $printProviderInterface->chooseProvider();
     my ($sentMessageQueues, $error) = $printProvider->sendAll( $messageQueues );
     if ($error) {
-        print $error;
+        $logger->warn($error);
         return (undef, $error);
     }
     return ($sentMessageQueues, undef);

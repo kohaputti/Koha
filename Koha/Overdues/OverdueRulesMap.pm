@@ -44,6 +44,7 @@ It doesn't use
 use Modern::Perl;
 use Carp qw(carp croak confess longmess);
 use Scalar::Util 'blessed';
+use Data::Printer;
 
 use C4::Context qw(dbh);
 use Koha::Caches;
@@ -53,6 +54,10 @@ use Koha::MessageQueue;
 use Koha::MessageQueues;
 
 use Koha::Overdues::OverdueRule;
+
+use Koha::Logger;
+my $logger = bless({lazyLoad => {category => __PACKAGE__}}, 'Koha::Logger');
+
 =head new
 
     my $orm = Koha::Overdues::OverdueRulesMap->new();
@@ -561,7 +566,7 @@ sub _getOverdueRulesMap {
             };
             my ($overdueRule, $error) = Koha::Overdues::OverdueRule->new($params);
             if ($error) {
-                confess "Error '$error' when creating an OverdueRule-object from ".$overdueRule->toString()."\n";
+                $logger->error("'$error' when creating an OverdueRule-object from ".Data::Printer::np($params));
                 next();
             }
 

@@ -18,7 +18,8 @@ package Koha::Overdues::Finder;
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 use Modern::Perl;
-use Carp;
+use Carp::Always;
+use Data::Printer;
 
 use DateTime;
 
@@ -26,8 +27,12 @@ use C4::Context qw(dbh);
 use Koha::Overdues::OverdueRulesMap;
 use C4::Circulation;
 
+use Koha::Logger;
+my $logger = bless({lazyLoad => {category => __PACKAGE__}}, 'Koha::Logger');
+
 sub new {
     my ($class, $self) = @_;
+    $logger->debug("Instantiating with ".Data::Printer::np($self));
 
     $self = {} unless ref $self eq 'HASH';
     bless $self, $class;
@@ -59,34 +64,36 @@ sub setToday {
     my ($self, $today) = @_;
     $today = Koha::DateUtils::dt_from_string($today, 'iso') unless ref $today eq 'DateTime';
     $self->{now} = $today;
+    $logger->info("Changed today to '$today'");
 }
 
 sub findNewOverdues {
-    my ($self, $lookBackDays, $notNotForLoan, $branchCode, $borrowerCategory, $letterNumber, $sortBy, $sortByAlt) = @_;
+    my ($self, $branchCode, $borrowerCategory, $letterNumber) = @_;
+    $logger->trace("Finding new overdues with branch '$branchCode', borcat '$borrowerCategory', letter '$letterNumber'");
 
     my $overdueRule = $self->{overduerules}->getOverdueRuleOrDefault( $branchCode, $borrowerCategory, $letterNumber );
     if (not($overdueRule)) {
-        if ($self->{verbose} > 1) {
-            no warnings;
-            carp "Finder->findNewOverdues($self, $branchCode, $borrowerCategory, $letterNumber, $sortBy, $sortByAlt):> No OverdueRule found from params. Skipping this group.";
-            use warnings;
-        }
+        $logger->warn("Finder->findNewOverdues($self, $branchCode, $borrowerCategory, $letterNumber):> No OverdueRule found from params. Skipping this group.");
         return;
     }
+    $logger->trace("Got overdue rule ".Data::Printer::np($overdueRule));
+
     my $delayDays = $overdueRule->{delay};
     my $lateDate = $self->{now}->clone();
     $lateDate->subtract(days => $delayDays); #Now we have the day after which these Issues are overdue.
     my $lookbackMaxDate = $lateDate->clone();
-    $lookbackMaxDate->subtract(days => $lookBackDays); #Now we know from where to start looking for overdue due_dates.
+    $lookbackMaxDate->subtract(days => $self->{lookback}); #Now we know from where to start looking for overdue due_dates.
+    $logger->trace("Looking at overdues between '$lookbackMaxDate' and '$lateDate'");
 
     my $params = [];
 
     #Check if we want to exclude using the items.notforloan -column.
     #For ex we don't want to send notifications for Items that have alrady been claimed.
-    my $notNotForLoanSql = '';
-    if ($notNotForLoan) {
-        $notNotForLoanSql = " i.notforloan != ? AND ";
-        push(@$params, $notNotForLoan);
+    my $notNotForLoanSql = '1';
+    if ($self->{notNotForLoan}) {
+        $notNotForLoanSql = " i.notforloan != ? ";
+        push(@$params, $self->{notNotForLoan});
+        $logger->trace("Ignoring issues with item.notforloan='$self->{notNotForLoan}'");
     }
 
     push(@$params, $lookbackMaxDate->iso8601(), $lateDate->iso8601(), $branchCode, $borrowerCategory);
@@ -95,37 +102,41 @@ sub findNewOverdues {
     push @$params, @olh_conditionParam if @olh_conditionParam;
 
     my $dbh = C4::Context->dbh();
-    my $sql =   "SELECT iss.*, b.*, i.* ".
-                "FROM issues iss LEFT JOIN borrowers b ON b.borrowernumber = iss.borrowernumber ".
-                "               LEFT JOIN message_queue_items mqi ON mqi.issue_id = iss.issue_id ".
-                "               LEFT JOIN message_queue mq ON mqi.message_id = mq.message_id ".
-                "               LEFT JOIN items i ON i.itemnumber = iss.itemnumber ".
-                "WHERE $notNotForLoanSql date(iss.date_due) BETWEEN date(?) AND date(?) AND iss.branchcode = ? AND b.categorycode = ? AND $olh_conditionWhere;";
+    my $sql =   "SELECT    iss.*, b.*, i.* \n".
+                "FROM      issues iss \n".
+                "LEFT JOIN borrowers b ON b.borrowernumber = iss.borrowernumber \n".
+                "LEFT JOIN message_queue_items mqi ON mqi.issue_id = iss.issue_id \n".
+                "LEFT JOIN message_queue mq ON mqi.message_id = mq.message_id \n".
+                "LEFT JOIN items i ON i.itemnumber = iss.itemnumber \n".
+                "WHERE     $notNotForLoanSql \n".
+                "      AND date(iss.date_due) BETWEEN date(?) AND date(?) \n".
+                "      AND iss.branchcode = ? \n".
+                "      AND b.categorycode = ? \n".
+                "      AND $olh_conditionWhere;";
 
     my $sth = $dbh->prepare($sql);
     $sth->execute( @$params );
     my $overdues = $sth->fetchall_arrayref({});
 
     #Report the findings!
-    if (ref($overdues) eq 'ARRAY' && scalar(@$overdues) == 0 && $self->{verbose} > 1) {
-        print "Found 0 Overdue Issues for $branchCode, $borrowerCategory, $letterNumber, with due date <= ".$lateDate->iso8601()."\n";
+    if ($logger->is_debug()) {
+        my $msg = "Found '".($overdues ? scalar(@$overdues) : 0)."' Overdue Issues for branch '$branchCode', borrower category '$borrowerCategory', letter number '$letterNumber', with due date <= '".$lateDate->iso8601()."'";
+        $logger->debug($msg) if ($overdues && scalar(@$overdues) == 0 && $logger->is_debug());
+        $logger->info($msg) if ($overdues && scalar(@$overdues) > 0 && $logger->is_info());
     }
-    if (ref($overdues) eq 'ARRAY' && scalar(@$overdues) > 0 && $self->{verbose}) {
-        print "Found ".scalar(@$overdues)." Overdue Issues for $branchCode, $borrowerCategory, $letterNumber, with due date <= ".$lateDate->iso8601()."\n";
-    }
-    if ($self->{verbose} > 2) {
+    if ($logger->is_trace()) {
         foreach my $param (@$params) {
             $sql =~ s/\?/'$param'/;
         }
-        print "Using this SQL:\n$sql\n";
+        $logger->trace("Using this SQL:\n$sql\n----------------------------------------");
     }
 
     foreach my $overdue (@$overdues) {
         #Store the overdueRule to the overdue-entry.
         $overdue->{overdueRule} = $overdueRule;
     }
-    if ($sortBy) {
-        $overdues = _sortBy($overdues, $sortBy, $sortByAlt);
+    if ($self->{sortBy}) {
+        $overdues = _groupBy($overdues, $self->{sortBy}, $self->{sortByAlt}); #The operation is actually grouping, not sorting, but this would cause the cronjob-interface to change.
     }
 
     return $overdues;
@@ -142,6 +153,7 @@ In a way overduenotices can become clogged, and then they all are sent as one bi
 In the worst case borrowers can get overdue notices 1, 2 and 3 at once!
 To save in message sending costs and public relations, it is smart to make sure that
 there is a minimum fixed time between all overdue letters.
+
 =cut
 
 sub _getSpecialIssueConditionForLetterNumber {
@@ -150,8 +162,7 @@ sub _getSpecialIssueConditionForLetterNumber {
 
     if ($letterNumber == 1) {
         #There are no previous overdue notifications sent for this Issue so we can safely send it away.
-        return (" mqi.id IS NULL ",
-               );
+        return (" mqi.id IS NULL ");
     }
     elsif ($letterNumber > 1) {
         #We need to calculate how many days apart on minimum letter 1 and 2 need to be.
@@ -162,13 +173,16 @@ sub _getSpecialIssueConditionForLetterNumber {
         my $currentDelay = $overdueRule->{delay};
         my $minimumDeltaBeforeCanSend = $currentDelay - $previousDelay;
 
-        return (" mqi.letternumber = ? AND TO_DAYS(?)-TO_DAYS(mq.time_queued) >= ? AND mq.status = 'sent' ".
-                " AND ".
-                "  (SELECT issue_id FROM message_queue_items mqi2 ".
-                "    LEFT JOIN message_queue mq2 ON mqi2.message_id = mq2.message_id ".
-                "    WHERE mqi2.issue_id = mqi.issue_id AND mqi2.letternumber = ? AND mq2.message_transport_type = mq.message_transport_type ".
-                "  ) ".
-                " IS NULL ",
+        return (          "(   mqi.letternumber = ? \n".
+                "          AND TO_DAYS(?)-TO_DAYS(mq.time_queued) >= ? \n".
+                "          AND mq.status = 'sent' \n".
+                "          AND ( SELECT    issue_id FROM message_queue_items mqi2 \n".
+                "                LEFT JOIN message_queue mq2 ON mqi2.message_id = mq2.message_id \n".
+                "                WHERE     mqi2.issue_id = mqi.issue_id \n".
+                "                AND       mqi2.letternumber = ? \n".
+                "                AND       mq2.message_transport_type = mq.message_transport_type \n".
+                "              ) IS NULL \n".
+                "          )",
                 $letterNumber-1, #Make sure the previous letter has been sent
                 $self->{now}->ymd(), #We can make this check for any day! But I'd prefer today.
                 $minimumDeltaBeforeCanSend, #Make sure that enough time has passed since the previous letter has been sent
@@ -176,23 +190,25 @@ sub _getSpecialIssueConditionForLetterNumber {
                 );
     }
     else {
-        carp "Overdue letternumber '$letterNumber' is not a real letternumber!\n";
+        $logger->fatal("Overdue letternumber '$letterNumber' is not a real letternumber!");
         return (undef,undef);
     }
 }
 
-=head _sortByGuarantorId
+=head _groupBy
 
-    $overdues = Koha::Overdues::Finder::_sortBy( $overdues, $hashKey, $altHashKey )
+    $overdues = Koha::Overdues::Finder::_groupBy( $overdues, $hashKey, $altHashKey )
 
-Sorts the given {branchcode => {borrowerCategory => {letterNumber => [ OVERDUEDATA, ... ]}}} -overdues SET
-based on $hashKey or $altHashKey if no guarantor is defined.
+Groups the given overdues list based on $hashKey or $altHashKey.
 
-For example: _sortBy( $overdues, 'guarantorid', 'borrowernumber' );
+ @param {ARRAYRef} Overdues
+ @param {String} Primary group overdue attribute
+ @param {String} Alternate group by attribute of primary attribute is missing or undef.
+ @returns {HASHRef} of groupable attribute values containing an ARRAYRef of overdues
 
 =cut
 
-sub _sortBy{
+sub _groupBy{
     my ($overdues, $hashKey, $altHashKey) = @_;
 
     my %sortedOverdues;
@@ -207,15 +223,17 @@ sub _sortBy{
             push @{$sortedOverdues{ $id }}, $overdue;
         }
     }
+    $logger->trace("Grouped overdues by '$hashKey' and '$altHashKey'. Given overdues '".scalar(@$overdues)."' grouped to '".scalar(keys(%sortedOverdues))."' groups");
     return \%sortedOverdues;
 }
 
-=head findAll
+=head findAllNewOverdues
 
     my $overdues = $finder->findAll();
 
 Finds all the overdue items,
 by the holdingbranch, borrowerCategory, letterNumber.
+
 =cut
 
 sub findAllNewOverdues {
@@ -236,12 +254,14 @@ sub findAllNewOverdues {
     #Find from all borrower categories or from a given subset?
     my $borrowerCategories = (ref $self->{borrowerCategories} eq 'ARRAY') ? $self->{borrowerCategories} : $orm->getBorrowerCategories();
 
+    $logger->info("Finding all new overdues for letters '@$letterNumbers' and borrower categories '@$borrowerCategories'");
+
     my $overdues = {};
     foreach my $branchCode (@$branches) {
         foreach my $borCat (@$borrowerCategories) {
             foreach my $letterNumber (  @$letterNumbers  ) { #Iterate each configured overdue notification
 
-                my $overduesSubSet = $self->findNewOverdues($self->{lookback}, $self->{notNotForLoan}, $branchCode, $borCat, $letterNumber, $self->{sortBy}, $self->{sortByAlt});
+                my $overduesSubSet = $self->findNewOverdues($branchCode, $borCat, $letterNumber);
                 $overdues->{$branchCode}->{$borCat}->{$letterNumber} = $overduesSubSet if ((ref $overduesSubSet eq 'HASH' && %$overduesSubSet) || (ref $overduesSubSet eq 'ARRAY' && @$overduesSubSet > 0));
             }
         }

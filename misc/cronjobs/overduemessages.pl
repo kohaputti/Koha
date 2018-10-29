@@ -18,7 +18,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 use Modern::Perl;
-use Carp;
+use Carp::Always;
 
 use Getopt::Long qw(:config no_ignore_case);
 
@@ -26,47 +26,38 @@ use Koha::Overdues::Controller;
 use Koha::Overdues::Builder;
 use Koha::Overdues::Calendar; #TODO: HACK TO ENABLE CALENDAR DAYS
 
-my $help;
-my $verbose = 0;
-my @letterNumbers;
-my @borrowerCategories;
-my $mergeNotificationBranches;
-my $collect;
-my $send;
-my $populateRegexp;
-my $populateDelete;
-my $sortByColumn;
-my $sortByColumnAlt;
-my $lookback;
-my $notNotForLoan;
-my $pageChangeItems;
-my $pageChangeSeparator;
+my %argv = (
+    sortByColumn => 'borrowernumber',
+    sortByColumnAlt => 'guarantorid',
+    notNotForLoan => 6,
+);
+my @letterNumbers; #Getopt::Long cannot directly access an array within a hash
+my ($verbose, $help);
 
 GetOptions(
     'h|help'                      => \$help,
-    'v|verbose:i'                 => \$verbose,
+    'v|verbose+'                  => \$verbose,
     'l|letternumbers=s{,}'        => \@letterNumbers,
-    'b|borrowercategories=s{,}'   => \@borrowerCategories,
-    'm|mergenotificationbranches' => \$mergeNotificationBranches,
-    'c|collect'                   => \$collect,
-    's|send'                      => \$send,
-    'p|populate:s'                => \$populateRegexp,
-    'd|populateDelete'            => \$populateDelete,
-    'sortby:s'                    => \$sortByColumn,
-    'sortbyalt:s'                 => \$sortByColumnAlt,
-    'lookback:s'                  => \$lookback,
-    'notnotforloan:s'             => \$notNotForLoan,
-    'pagechangeitems:i'           => \$pageChangeItems,
-    'pagechangeseparator:s'       => \$pageChangeSeparator,
-);
+    'b|borrowercategories=s{,}'   => \$argv{borrowerCategories},
+    'm|mergenotificationbranches' => \$argv{mergeNotificationBranches},
+    'c|collect'                   => \$argv{collect},
+    's|send'                      => \$argv{send},
+    'p|populate:s'                => \$argv{populateRegexp},
+    'd|populateDelete'            => \$argv{populateDelete},
+    'sortby:s'                    => \$argv{sortByColumn},
+    'sortbyalt:s'                 => \$argv{sortByColumnAlt},
+    'lookback:s'                  => \$argv{lookback},
+    'notnotforloan:s'             => \$argv{notNotForLoan},
+    'pagechangeitems:i'           => \$argv{_repeatPageChange}{items},
+    'pagechangeseparator:s'       => \$argv{_repeatPageChange}{separator},
+) or die("Error in command line arguments\n");
+$argv{letterNumbers} = \@letterNumbers;
 
 my $usage = <<USAGE;
 
 
-  --verbose               Defaults to 0, minimal output.
-                          1, some results
-                          2, detailed results
-                          3, SQL dumps
+  -v --verbose            Defaults to log4perl commandline-category.
+                          Repeatable, each repetition increases the log4perl log level
 
   --lookback              How many days in the past to look for overdue Issues? Defaults to
                           the biggest delay in koha.overduerules.delay* + 30 days.
@@ -83,7 +74,7 @@ my $usage = <<USAGE;
                           Also useful if you have lost your message_queue-rows and only know the
                           Items claimed status.
 
-  --sortby                Based on which borrowers database column to sort the overdue notifications.
+  --sortby                Based on which borrowers database column to group the overdue notifications.
                           Defaults to
                               --sortby borrowernumber
                           This causes all notifications to be gathered under the borrower owning the
@@ -94,8 +85,9 @@ my $usage = <<USAGE;
                           You must define
                               --sortbyalt borrowernumber
                           to fall back to if using the sortby-parameter.
+                          For legacy reasons the commandline attribute remains --sortby, not --groupby
 
-  --sortbyalt             Alternative sorting borrowers-column, if sortby is not defined.
+  --sortbyalt             Alternative grouping borrowers-column, if sortby is not defined.
                           Should be borrowernumber if --sortby is used. Otherwise erratic behaviour
                           will happen when the Overdues Finder cannot sort the overdue notification.
 
@@ -151,7 +143,7 @@ EXAMPLES:
 
   To migrate from a system state where overdue notifications haven't been sent in 5+ months,
   you can use these commands:
-  ./overduemessages.pl --collect --letternumbers 1 2 --mergenotificationbranches 1 --verbose 1
+  ./overduemessages.pl --collect --letternumbers 1 2 --mergenotificationbranches 1 -vv
                        --lookback 180 --notnotforloan 6
                        --pagechangeitems 8 --pagechangeseparator "10\\n31"
 
@@ -173,48 +165,39 @@ if ($help) {
     print $usage;
     exit 0;
 }
-unless ($collect || $send || $populateRegexp) {
-    print $usage.
+unless ($argv{collect} || $argv{send} || $argv{populateRegexp}) {
+    warn $usage.
           "You must define atleast --collect or --send, better even both :)\n";
     exit 0;
 }
 
-my %repeatPageChange;
-if ($pageChangeItems xor $pageChangeSeparator) { #Both of these must be defined or none.
-    print $usage.
+if ($argv{_repeatPageChange}{items} xor $argv{_repeatPageChange}{separator}) { #Both of these must be defined or none.
+    warn $usage.
           "You must define both --pagechangeitems and --pagechangeseparator or neither.\n";
     exit 0;
 }
-elsif($pageChangeItems && $pageChangeSeparator) {
-    $repeatPageChange{items} = $pageChangeItems;
-    $repeatPageChange{separator} = $pageChangeSeparator;
+
+BEGIN {
+    C4::Context->interface('commandline');
+    use Koha::Logger;
+    Koha::Logger->setConsoleVerbosity($verbose);
 }
+my $logger = bless({lazyLoad => {category => __PACKAGE__}}, 'Koha::Logger');
 
  #TODO: HACK TO ENABLE CALENDAR DAYS
 my $calendar = Koha::Overdues::Calendar->new();
 $calendar->upsertWeekdays('','1,2,3,4,5,6,7');
 C4::Context->set_preference('PrintProviderImplementation', 'PrintProviderRopoCapital');
 
-my $controller = Koha::Overdues::Controller->new({verbose => $verbose,
-                                                  sortBy => $sortByColumn,
-                                                  sortByAlt => $sortByColumnAlt,
-                                                  lookback => $lookback,
-                                                  notNotForLoan => $notNotForLoan,
-                                                  mergeBranches => $mergeNotificationBranches,
-                                                  _repeatPageChange => ((scalar(%repeatPageChange)) ? \%repeatPageChange : undef),
-                                                });
-my ($overdueLetters, $errors) = $controller->gatherOverdueNotifications( (@letterNumbers)      ? \@letterNumbers      : undef,
-                                                        (@borrowerCategories) ? \@borrowerCategories : undef,
-                                                      ) if ($collect);
-carp join("\n","!!ERRORS FOUND while gathering overdue notifications!!",@$errors) if($errors && ref($errors) eq 'ARRAY');
+my $controller = Koha::Overdues::Controller->new(\%argv);
+my ($overdueLetters, $errors) = $controller->gatherOverdueNotifications() if ($argv{collect});
+$logger->warn(join("\n","!!ERRORS FOUND while gathering overdue notifications!!",@$errors)) if($errors);
 
-my $sentOverdueLetters = $controller->sendOverdueNotifications(
-                                                        (@letterNumbers)      ? \@letterNumbers      : undef,
-                                                      ) if ($send);
+my $sentOverdueLetters = $controller->sendOverdueNotifications() if ($argv{send});
 
-if ($populateRegexp) {
-    my $builder = Koha::Overdues::Builder->new({verbose => $verbose});
-    $builder->populateMessageQueueItemsFromMessageQueues( $populateRegexp, $populateDelete );
+if ($argv{populateRegexp}) {
+    my $builder = Koha::Overdues::Builder->new();
+    $builder->populateMessageQueueItemsFromMessageQueues( $argv{populateRegexp}, $argv{populateDelete} );
 
     print join("\n",
         "",

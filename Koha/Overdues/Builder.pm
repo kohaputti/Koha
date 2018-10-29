@@ -18,7 +18,8 @@ package Koha::Overdues::Builder;
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 use Modern::Perl;
-use Carp;
+use Carp::Always;
+use Data::Printer;
 
 use Koha::Overdues::OverdueRulesMap;
 use C4::Circulation;
@@ -31,25 +32,31 @@ use Koha::MessageQueue;
 use Koha::MessageQueues;
 use Koha::MessageQueue::Notification::Overdues;
 
+use Koha::Logger;
+my $logger = bless({lazyLoad => {category => __PACKAGE__}}, 'Koha::Logger');
+
 sub new {
     my ($class, $self) = @_;
+    $logger->debug("Instantiating with parameters ".Data::Printer::np($self));
 
     $self = {} unless ref $self eq 'HASH';
     bless $self, $class;
 
-    $self->{verbose} = (defined $self->{verbose}) ? $self->{verbose} : 1;
     $self->{mergeBranches} = (defined $self->{mergeBranches}) ? $self->{mergeBranches} : 1;
-    if ($self->{_repeatPageChange}) {
-        unless (ref($self->{_repeatPageChange}) eq 'HASH' &&
-                $self->{_repeatPageChange}->{items} =~ /^\d+$/ &&
+    if ($self->{_repeatPageChange} &&
+            defined($self->{_repeatPageChange}->{items})) {
+        if (not($self->{_repeatPageChange}->{items} =~ /^\d+$/) &&
                 defined($self->{_repeatPageChange}->{separator})) {
-            carp "Overdues::Builder->new():> _repeatPageChange-parameter is faulty.";
+            $logger->warn("Overdues::Builder->new():> _repeatPageChange-parameter is faulty.");
             $self->{_repeatPageChange} = undef;
         }
         else {
             #sanitate funny characters
             $self->{_repeatPageChange}->{separator} =~ s/\\n/\n/gsm;
         }
+    }
+    else {
+        $self->{_repeatPageChange} = undef;
     }
 
     return $self;
@@ -65,12 +72,13 @@ notifications to our borrowers at once, and even further issue multiple fines,
 because we have been unable to send the notifications in time.
 To fix this, we rebuild the message_queue.content and add the new Issue to the
 message_queue_items.
+
 =cut
 
 sub _mergeOverdueIssuesToOverdueNotification {
     my ($self, $overdues, $messageTransportType, $branchCode, $repeat, $existingMessageQueue) = @_;
-
     my @messageQueueItems = $existingMessageQueue->items();
+    $logger->debug("Merging overdue issues to overdue notifications with ".Data::Printer::np(@_));
     foreach my $mqItem (@messageQueueItems) {
         my $biblionumber = C4::Biblio::GetBiblionumberFromItemnumber($mqItem->itemnumber());
         push @$repeat, {'biblio'      => $biblionumber,
@@ -151,7 +159,7 @@ sub _createAndEnqueueOverdueNotifications {
                       };
     }
     unless (scalar(@repeat)) {
-        carp "Builder::_createAndEnqueueOverdueLetters($branchCode, $borrowerCategory, $letterNumber):> No Overdue Issues?";
+        $logger->warn("Builder::_createAndEnqueueOverdueLetters($branchCode, $borrowerCategory, $letterNumber):> No Overdue Issues?");
         return;
     }
 
@@ -159,13 +167,14 @@ sub _createAndEnqueueOverdueNotifications {
     my $overdueRule = $overdues->[0]->{overdueRule};
     my $messageTransportTypes = $overdueRule->{messageTransportTypes};
     unless ($messageTransportTypes) {
-        carp "Builder::_createAndEnqueueOverdueLetters($branchCode, $borrowerCategory, $letterNumber):> Overdue has no message_transport_types defined?";
+        $logger->warn("Builder::_createAndEnqueueOverdueLetters($branchCode, $borrowerCategory, $letterNumber):> Overdue has no message_transport_types defined?");
         return;
     }
     foreach my $mtt (keys %$messageTransportTypes) {
         my $existingOverdueNotification = Koha::MessageQueue::Notification::Overdues->checkIfNotSentNotificationForOverdueIssueEnqueued($overdues->[0], $mtt);
 
         if ($existingOverdueNotification) {
+            $logger->warn("Existing overdue notification found for overdue rule ".Data::Printer::np($overdueRule)."\nmessage transport type '$mtt'");
             my $error = $self->_mergeOverdueIssuesToOverdueNotification($overdues, $mtt, $branchCode, \@repeat, $existingOverdueNotification);
             if ($error) {
                 push(@$errors, $error);
@@ -201,9 +210,8 @@ sub buildAllOverdueNotifications {
     foreach my $branchCode (sort keys %$overduesSet) {
         foreach my $borrowerCategory (sort keys %{$overduesSet->{$branchCode}}) {
             foreach my $letterNumber (sort keys %{$overduesSet->{$branchCode}->{$borrowerCategory}}) {
-                print "\nEnqueing for $branchCode, $borrowerCategory, $letterNumber\n";
+            $logger->debug("Enqueing overdues for branch '$branchCode', borcat '$borrowerCategory', letter '$letterNumber'");
                 foreach my $sortByKey (sort keys %{$overduesSet->{$branchCode}->{$borrowerCategory}->{$letterNumber}}) {
-                    print '.';
                     my $overdues = $overduesSet->{$branchCode}->{$borrowerCategory}->{$letterNumber}->{$sortByKey};
 
                     $self->_createAndEnqueueOverdueNotifications($overdues, $message_queue_rows, $branchCode, $borrowerCategory, $letterNumber, $sortByKey, $errors) if @$overdues;
@@ -218,6 +226,7 @@ sub buildAllOverdueNotifications {
 sub _mergeNotificationsBranches {
     my ($self, $overdues, $targetBranch) = @_;
     $targetBranch = $targetBranch ? $targetBranch : '';
+    $logger->trace("Merging notification branches to branch '$targetBranch'");
 
     my $targetBranchHash = {}; #Collect the merged overdues under this branch
 
@@ -246,6 +255,7 @@ sub _mergeNotificationsBranches {
                     }
                     else {
                         push @{$target}, $source;
+                        $logger->trace("Merged notification branch '$branchCode' for borcat '$borCatCode', letter '$letterNumber'");
                     }
                 }
                 #Sorted overdues SETs are collected under the given hash-key in an array.
@@ -254,6 +264,7 @@ sub _mergeNotificationsBranches {
                         my $sourceNode = $source->{$sourceNodeKey};
                         if (ref $target->{$sourceNodeKey} eq 'ARRAY') {
                             push @{$target->{$sourceNodeKey}}, @$sourceNode;
+                            $logger->trace("Merged notification branch '$branchCode' for borcat '$borCatCode', letter '$letterNumber'");
                         }
                         else { #No reference, so it must not be an array
                             $target->{$sourceNodeKey} = $sourceNode; #Copy an array
@@ -384,7 +395,7 @@ sub _findItemnumberFromMessage_queue {
             $itemnumber = $itemnumber->{itemnumber} if $itemnumber;
         }
         unless ($itemnumber) {
-            carp "Unknown Item identifier $itemId\n";
+            $logger->warn("Unknown Item identifier $itemId");
             next();
         }
         push @itemnumbers, $itemnumber;
