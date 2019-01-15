@@ -71,9 +71,10 @@ sub to_koha {
             $word =~ s/^[\,\.;:\\\/\"\'\-\=]+//g;
             $word =~ s/[\,\.;:\\\/\"\'\-\=]+$//g;
             next if (!$word);
+            $word = $self->escape($word);
             my @words;
             foreach my $field (@{$fields}) {
-                push(@words, "$field:($prefix$word$suffix)");
+                push(@words, "$field:($quote$prefix$word$suffix$quote)");
             }
             push (@terms, join(' OR ', @words));
         }
@@ -81,15 +82,22 @@ sub to_koha {
     }
 
     my @terms;
+    $term = $self->escape($term);
     foreach my $field (@{$fields}) {
-        push(@terms, "$field:($prefix$term$suffix)");
+        push(@terms, "$field:($quote$prefix$term$suffix$quote)");
     }
     return '(' . join(' OR ', @terms) . ')';
 }
 
+sub escape {
+    my ($self, $term) = @_;
+
+    $term =~ s/([()])/\\$1/g;
+    return $term;
+}
+
 package Net::Z3950::RPN::And;
-sub to_koha
-{
+sub to_koha {
     my ($self, $mappings) = @_;
 
     return '(' . $self->[0]->to_koha($mappings) . ' AND ' .
@@ -97,8 +105,7 @@ sub to_koha
 }
 
 package Net::Z3950::RPN::Or;
-sub to_koha
-{
+sub to_koha {
     my ($self, $mappings) = @_;
 
     return '(' . $self->[0]->to_koha($mappings) . ' OR ' .
@@ -106,8 +113,7 @@ sub to_koha
 }
 
 package Net::Z3950::RPN::AndNot;
-sub to_koha
-{
+sub to_koha {
     my ($self, $mappings) = @_;
 
     return '(' . $self->[0]->to_koha($mappings) . ' NOT ' .
