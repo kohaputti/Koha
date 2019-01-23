@@ -67,7 +67,7 @@ C4::Context->setCommandlineEnvironment();
 Koha::Logger->setConsoleVerbosity($verbose);
 my $logger = Koha::Logger->new();
 
-my $chunker = C4::Biblio::Chunker->new(undef, undef, undef, $verbose);
+my $chunker = C4::Biblio::Chunker->new(undef, undef, 100, $verbose);
 my $processor = Koha::RecordProcessor->new( { filters => ( $filter ) });
 while (my $chunk = $chunker->getChunkAsMARCRecord()) {
     foreach my $r (@$chunk) {
