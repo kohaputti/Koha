@@ -21,6 +21,7 @@ package Koha::Deduplicator;
 use Modern::Perl;
 
 use C4::Matcher;
+use C4::Holdings;
 use C4::Items qw(MoveItemFromBiblio);
 use C4::Biblio qw(GetBiblionumberSlice GetMarcBiblio GetBiblioItemByBiblioNumber DelBiblio);
 use C4::Serials qw(CountSubscriptionFromBiblionumber);
@@ -109,6 +110,7 @@ sub deduplicate {
     $self->{duplicates} = [];
     foreach my $biblionumber (@$biblionumbers) {
         my $marc = C4::Biblio::GetMarcBiblio($biblionumber);
+	next unless $marc;
         my $matches = Koha::Deduplicator->getMatches($self->{matcher}, $marc, $self->{max_matches}, $self->{alertMatchCountThreshold});
 
         if (scalar(@$matches) > 1) {
@@ -392,6 +394,21 @@ sub merge {
         ModOrder ($myorder);
     # TODO : add error control (in ModOrder?)
     }
+
+    # Moving holdings
+    $sth = $dbh->prepare( 'SELECT holding_id FROM holdings WHERE biblionumber = ? AND deleted_on IS NULL' );
+    $sth->execute( $frombiblio );
+    while ( my $holding_id = $sth->fetchrow ) {
+	my $holding = C4::Holdings::GetMarcHolding($holding_id);
+	my $frameworkcode = C4::Holdings::GetHoldingFrameworkCode($holding_id);
+	my $new_holding_id = C4::Holdings::AddHolding($holding, $frameworkcode, $tobiblio);
+	$sth2 = $dbh->prepare("UPDATE items SET holding_id = ? WHERE holding_id = ?");
+	$sth2->execute($new_holding_id, $holding_id);
+	if (my $error = C4::Holdings::DelHolding($holding_id)) {
+	    print $error;
+	}
+    }
+    $sth->finish();
 
     # Deleting the other record
     if (scalar(@$errors) == 0) {
