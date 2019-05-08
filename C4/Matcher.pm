@@ -646,6 +646,9 @@ sub get_matches {
             && C4::Context->preference('AggressiveMatchOnISSN') )
             && !C4::Context->preference('UseQueryParser');
 
+        @source_keys = C4::Koha::FilterNonMelindaKeys(@source_keys)
+          if ( $matchpoint->{index} =~ /^system-control-number$/i );
+
         # build query
         my $query;
         my $error;

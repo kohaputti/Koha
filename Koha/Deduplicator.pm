@@ -402,9 +402,11 @@ sub merge {
 	my $holding = C4::Holdings::GetMarcHolding($holding_id);
 	my $frameworkcode = C4::Holdings::GetHoldingFrameworkCode($holding_id);
 	my $new_holding_id = C4::Holdings::AddHolding($holding, $frameworkcode, $tobiblio);
-	$sth2 = $dbh->prepare("UPDATE items SET holding_id = ? WHERE holding_id = ?");
+	my $sth2 = $dbh->prepare("UPDATE items SET holding_id = ? WHERE holding_id = ?");
 	$sth2->execute($new_holding_id, $holding_id);
-	if (my $error = C4::Holdings::DelHolding($holding_id)) {
+	$sth2->finish();
+	my $error = C4::Holdings::DelHolding($holding_id);
+	if ($error) {
 	    print $error;
 	}
     }

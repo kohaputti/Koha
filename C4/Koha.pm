@@ -957,6 +957,25 @@ sub NormalizeISSN {
 
 }
 
+=head2 FilterNonMelindaKeys
+
+  my @systemcontrolnumbers = FilterNonMelindaKeys( @systemcontrolnumbers );
+
+  Filters out non-Melinda ids.
+
+  In a scalar context, the issns are returned as a
+  string delimited by ' | '.
+
+=cut
+
+sub FilterNonMelindaKeys {
+    my (@systemcontrolnumbers) = @_;
+
+    @systemcontrolnumbers = grep { /^FCC/ } @systemcontrolnumbers;
+
+    return @systemcontrolnumbers;
+}
+
 =head2 GetVariationsOfISSN
 
   my @issns = GetVariationsOfISSN( $issn );
