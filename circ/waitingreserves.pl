@@ -137,7 +137,7 @@ foreach my $num (@getreserves) {
     $getreserv{'borrowerothernames'} = $getborrower->{'othernames'};
     $getreserv{'borrowerphone'}     = $getborrower->{'phone'};
 
-    my $borEmail = GetFirstValidEmailAddress( $borrowernum );
+    my $borEmail = $borrowernum ? GetFirstValidEmailAddress( $borrowernum ) : q{};
 
     if ( $borEmail ) {
         $getreserv{'borrowermail'}  = $borEmail;
