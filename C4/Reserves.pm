@@ -404,7 +404,7 @@ sub CanItemBeReserved {
 
     if ( defined $holds_per_day &&
           (   ( $holds_per_day > 0 && $today_holds->count() >= $holds_per_day )
-           or ( $holds_per_day == 0 ) )
+           or ( $holds_per_day == 0 && $holds_per_day ne '') )
         )  {
         return { status => 'tooManyReservesToday', limit => $holds_per_day };
     }
