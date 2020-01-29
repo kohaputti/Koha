@@ -81,6 +81,8 @@ our $sample_data = {
 };
 our ( $borrowernumber, $start, $prev_time, $cleanup_needed );
 
+$dbh->do(q|INSERT INTO itemtypes(itemtype) VALUES (?)|, undef, $sample_data->{itemtype}{itemtype});
+
 SKIP: {
     eval { require Selenium::Remote::Driver; };
     skip "Selenium::Remote::Driver is needed for selenium tests.", 20 if $@;
